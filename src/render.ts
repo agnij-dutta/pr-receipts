@@ -147,6 +147,8 @@ const esc = (s: string) =>
     .replace(/[|<>`]/g, (c) => `\\${c}`)
     .replace(/(^|[\s([])@/g, "$1@\u200b");
 
+const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
+
 /** Options for `renderMarkdown`. */
 export interface RenderOptions {
   /** Include the hidden sticky marker (the GitHub Action does). */
@@ -183,7 +185,7 @@ export function renderMarkdown(r: Receipt, opts: RenderOptions = {}): string {
   lines.push(`| Human turns | ${t.turns} |`);
   lines.push(`| API requests | ${t.apiRequests}${t.subagentRequests ? ` (${t.subagentRequests} by subagents)` : ""} |`);
   lines.push(
-    `| Retries | ${t.apiErrors} API error retries${t.refusalFallbacks ? `, ${t.refusalFallbacks} refusal fallbacks` : ""} |`,
+    `| Retries | ${plural(t.apiErrors, "API error retry", "API error retries")}${t.refusalFallbacks ? `, ${plural(t.refusalFallbacks, "refusal fallback", "refusal fallbacks")}` : ""} |`,
   );
   lines.push(`| Tool calls | ${t.toolCalls} |`);
   lines.push(`| Files touched | ${r.files.count} |`);

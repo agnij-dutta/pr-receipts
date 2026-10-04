@@ -5,9 +5,15 @@ on:
   pull_request:
     types: [opened, synchronize, reopened]
 
+# Least privilege: read the code, write one PR comment. Nothing else.
 permissions:
   contents: read
   pull-requests: write
+
+# One run per PR at a time, so two quick pushes can't both create a comment.
+concurrency:
+  group: pr-receipts-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
 
 jobs:
   receipt:
@@ -15,7 +21,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0 # receipts live on PR commits; we need them locally
+          fetch-depth: 0 # receipts are notes on the PR's commits, so the commits must be here
       - uses: agnij-dutta/pr-receipts@v0
         with:
-          dry-run: "false"
+          dry-run: "false" # "true" prints the comment to the log and step summary, no API calls
+          on-missing: skip # or "comment" to post a short "no receipt yet" note

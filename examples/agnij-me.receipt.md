@@ -40,7 +40,7 @@ Cache hit rate: 98% of prompt tokens were served from cache.
 - Window 2026-09-19T10:21:19.000Z to 2026-09-28T13:09:04.000Z
 - Matched requests: 144 by git branch, 0 by working directory + time. Confidence: **high**
 - Sessions: `3552d005`, `8f019b34`
-- Prices from https://platform.claude.com/docs/en/about-claude/pricing (fetched 2026-10-04). API list prices; subscription plans pay differently.
+- Prices from https://platform.claude.com/docs/en/about-claude/pricing (fetched 2026-10-04). API list prices, not what a Pro/Max subscription pays.
 - Lower bound: Claude Code side calls that never reach the transcript (titles, summaries, permission classifier) are not counted.
 
 </details>

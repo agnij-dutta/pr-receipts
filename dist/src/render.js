@@ -138,6 +138,7 @@ export function sanitizeReceipt(input) {
 const esc = (s) => String(s)
     .replace(/[|<>`]/g, (c) => `\\${c}`)
     .replace(/(^|[\s([])@/g, "$1@\u200b");
+const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
 /**
  * Render a receipt as the PR comment body. Every string taken from the receipt
  * goes through `esc`; numbers go through the format helpers.
@@ -164,7 +165,7 @@ export function renderMarkdown(r, opts = {}) {
     lines.push(`| Models | ${r.models.map((m) => esc(prettyModel(m.model))).join(", ")} |`);
     lines.push(`| Human turns | ${t.turns} |`);
     lines.push(`| API requests | ${t.apiRequests}${t.subagentRequests ? ` (${t.subagentRequests} by subagents)` : ""} |`);
-    lines.push(`| Retries | ${t.apiErrors} API error retries${t.refusalFallbacks ? `, ${t.refusalFallbacks} refusal fallbacks` : ""} |`);
+    lines.push(`| Retries | ${plural(t.apiErrors, "API error retry", "API error retries")}${t.refusalFallbacks ? `, ${plural(t.refusalFallbacks, "refusal fallback", "refusal fallbacks")}` : ""} |`);
     lines.push(`| Tool calls | ${t.toolCalls} |`);
     lines.push(`| Files touched | ${r.files.count} |`);
     lines.push(`| Sessions | ${r.sessions.length} |`);

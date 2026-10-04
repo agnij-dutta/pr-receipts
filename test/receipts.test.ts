@@ -293,6 +293,7 @@ test("render: headline, table, sticky marker, no em dashes", async () => {
   assert.ok(md.includes("| Cost (API list price) | **$0.31** |"));
   assert.ok(md.includes("| Models | Opus 5.5, Sonnet 5, Haiku 4.5 |"));
   assert.ok(md.includes("| API requests | 5 (1 by subagents) |"));
+  assert.ok(md.includes("| Retries | 1 API error retry, 1 refusal fallback |"));
   assert.ok(md.includes("Confidence: **high**"));
   assert.ok(!md.includes(String.fromCharCode(0x2014)), "no em dashes");
   assert.ok(!renderMarkdown(r).includes(STICKY_MARKER));
