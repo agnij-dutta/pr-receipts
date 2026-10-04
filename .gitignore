@@ -1,6 +1,22 @@
+# Dependencies and build output (dist/src and dist/config ARE committed for the Action)
 node_modules/
 dist/test/
+
+# Local data: generated fixture worlds and receipts made while trying the CLI
 test/fixtures/generated/
 receipt.json
+receipt.md
+
+# Env files and keys
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Caches and logs
+.cache/
+coverage/
+*.tsbuildinfo
 *.log
 .DS_Store

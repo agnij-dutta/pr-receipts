@@ -1,0 +1,45 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    env:
+      # The fixtures and `attach` create git commits, which need an identity.
+      GIT_AUTHOR_NAME: ci
+      GIT_AUTHOR_EMAIL: ci@example.com
+      GIT_COMMITTER_NAME: ci
+      GIT_COMMITTER_EMAIL: ci@example.com
+    strategy:
+      matrix:
+        node: [20, 22]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - run: npm ci
+      - name: Lint, format check and typecheck
+        run: npm run check
+      - name: Build and test
+        run: npm test
+      - name: Committed dist/ matches the source
+        run: |
+          git status --porcelain dist/src dist/config
+          test -z "$(git status --porcelain dist/src dist/config)" || { echo "::error::dist/ is out of date. Run npm run build and commit it."; exit 1; }
+      - name: Action dry run against a synthetic PR
+        run: |
+          W=$(node dist/test/fixtures/generate.js | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>console.log(JSON.parse(s).repo))')
+          node dist/src/cli.js attach --repo "$W" --branch feature/receipts --projects-dir "$(dirname "$W")/claude/projects"
+          printf '{"pull_request":{"number":1,"head":{"sha":"%s"},"base":{"sha":"%s"}}}' \
+            "$(git -C "$W" rev-parse feature/receipts)" "$(git -C "$W" rev-parse main)" > "$RUNNER_TEMP/event.json"
+          node dist/src/cli.js comment --repo "$W" --event "$RUNNER_TEMP/event.json" --dry-run | tee "$RUNNER_TEMP/out.txt"
+          grep -q "This PR cost" "$RUNNER_TEMP/out.txt"
