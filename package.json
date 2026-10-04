@@ -1,0 +1,30 @@
+{
+  "name": "pr-receipts",
+  "version": "0.1.0",
+  "description": "Receipts for agent-written pull requests: tokens, dollars, and agent time from local Claude Code transcripts, posted as a sticky PR comment.",
+  "type": "module",
+  "license": "MIT",
+  "author": "Agnij Dutta",
+  "bin": {
+    "pr-receipts": "dist/src/cli.js"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json && node scripts/copy-assets.mjs",
+    "fixtures": "node dist/test/fixtures/generate.js",
+    "test": "npm run build && node --test dist/test/*.test.js",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "files": [
+    "dist",
+    "config",
+    "action.yml",
+    "README.md"
+  ],
+  "devDependencies": {
+    "@types/node": "^22.20.5",
+    "typescript": "^5.9.3"
+  }
+}

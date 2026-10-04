@@ -1,0 +1,46 @@
+name: PR Receipts
+description: Post a sticky "what did this PR cost" comment from a receipt stored in git notes by `pr-receipts attach --push`.
+author: Agnij Dutta
+branding:
+  icon: file-text
+  color: green
+
+inputs:
+  github-token:
+    description: Token used to read and write PR comments. Needs `pull-requests: write`.
+    default: ${{ github.token }}
+  notes-ref:
+    description: Git notes ref holding receipts (without the refs/notes/ prefix).
+    default: pr-receipts
+  dry-run:
+    description: Render the comment into the job log and step summary without calling the GitHub API.
+    default: "false"
+  on-missing:
+    description: What to do when no receipt is attached. `skip` (default) or `comment` (posts a short "no receipt yet" note).
+    default: skip
+
+outputs:
+  cost-usd:
+    description: Total cost from the receipt, if one was found.
+  headline:
+    description: One-line receipt headline, if one was found.
+
+runs:
+  using: composite
+  steps:
+    - name: Fetch receipt notes
+      shell: bash
+      env:
+        NOTES_REF: ${{ inputs.notes-ref }}
+      run: |
+        git fetch --no-tags origin "+refs/notes/${NOTES_REF}:refs/notes/${NOTES_REF}" \
+          || echo "pr-receipts: no refs/notes/${NOTES_REF} on origin yet"
+    - name: Upsert sticky comment
+      id: comment
+      shell: bash
+      env:
+        INPUT_GITHUB_TOKEN: ${{ inputs.github-token }}
+        INPUT_NOTES_REF: ${{ inputs.notes-ref }}
+        INPUT_DRY_RUN: ${{ inputs.dry-run }}
+        INPUT_ON_MISSING: ${{ inputs.on-missing }}
+      run: node "${GITHUB_ACTION_PATH}/dist/src/action/main.js"

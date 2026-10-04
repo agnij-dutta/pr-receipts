@@ -1,0 +1,98 @@
+{
+  "schema": "pr-receipts/v1",
+  "generatedAt": "2026-10-04T06:27:34.453Z",
+  "generator": "pr-receipts@0.1.0",
+  "headline": "This PR cost $6.92 and 35 minutes of agent time.",
+  "repo": {
+    "name": "agnij-me",
+    "branch": "main",
+    "base": null,
+    "headSha": "f2f837284a84734960adc4eae42d162b27575fd7",
+    "commitRange": "0bf4641..main",
+    "commits": 6,
+    "window": {
+      "start": "2026-09-19T10:21:19.000Z",
+      "end": "2026-09-28T13:09:04.000Z"
+    }
+  },
+  "totals": {
+    "inputTokens": 292,
+    "outputTokens": 79702,
+    "cacheReadTokens": 19191216,
+    "cacheWrite5mTokens": 0,
+    "cacheWrite1hTokens": 399554,
+    "costUSD": 6.9193,
+    "apiRequests": 144,
+    "subagentRequests": 0,
+    "turns": 17,
+    "agentTimeMs": 2117672,
+    "activeTimeMs": 3194233,
+    "toolCalls": 302,
+    "apiErrors": 0,
+    "refusalFallbacks": 0,
+    "webSearches": 0
+  },
+  "models": [
+    {
+      "model": "claude-sonnet-5",
+      "requests": 100,
+      "inputTokens": 204,
+      "outputTokens": 55960,
+      "cacheReadTokens": 14273680,
+      "cacheWrite5mTokens": 0,
+      "cacheWrite1hTokens": 287650,
+      "costUSD": 4.5653
+    },
+    {
+      "model": "claude-opus-5-5",
+      "requests": 44,
+      "inputTokens": 88,
+      "outputTokens": 23742,
+      "cacheReadTokens": 4917536,
+      "cacheWrite5mTokens": 0,
+      "cacheWrite1hTokens": 111904,
+      "costUSD": 2.3539
+    }
+  ],
+  "files": {
+    "count": 2,
+    "paths": [
+      "app/hire/page.tsx",
+      "content/content.ts"
+    ]
+  },
+  "sessions": [
+    {
+      "id": "3552d005",
+      "requests": 100,
+      "costUSD": 4.5653,
+      "firstSeen": "2026-09-24T07:30:38.675Z",
+      "lastSeen": "2026-09-24T08:39:53.045Z"
+    },
+    {
+      "id": "8f019b34",
+      "requests": 44,
+      "costUSD": 2.3539,
+      "firstSeen": "2026-09-28T12:39:12.574Z",
+      "lastSeen": "2026-09-28T12:59:57.831Z"
+    }
+  ],
+  "mapping": {
+    "byBranch": 144,
+    "byCwd": 0,
+    "byFiles": 0,
+    "excludedOtherBranch": 0,
+    "confidence": "high",
+    "notes": []
+  },
+  "pricing": {
+    "source": "https://platform.claude.com/docs/en/about-claude/pricing",
+    "fetchedAt": "2026-10-04",
+    "unpricedModels": []
+  },
+  "privacy": {
+    "contentIncluded": false,
+    "toolCounts": false,
+    "filePaths": true
+  }
+}

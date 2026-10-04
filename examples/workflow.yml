@@ -1,0 +1,21 @@
+# Copy to .github/workflows/pr-receipts.yml in the repo that receives agent PRs.
+name: PR Receipts
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  receipt:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # receipts live on PR commits; we need them locally
+      - uses: agnij-dutta/pr-receipts@v0
+        with:
+          dry-run: "false"

@@ -1,0 +1,6 @@
+node_modules/
+dist/test/
+test/fixtures/generated/
+receipt.json
+*.log
+.DS_Store
