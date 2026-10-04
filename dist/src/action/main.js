@@ -51,7 +51,7 @@ export function bodyFor(receipt) {
  */
 export async function findSticky(f, api, repo, pr, token) {
     for (let page = 1; page <= 20; page++) {
-        const res = await f(`${api}/repos/${repo}/issues/${pr}/comments?per_page=100&page=${page}`, {
+        const res = await request(f, "list comments", `${api}/repos/${repo}/issues/${pr}/comments?per_page=100&page=${page}`, {
             headers: ghHeaders(token),
         });
         if (!res.ok)
@@ -64,6 +64,16 @@ export async function findSticky(f, api, repo, pr, token) {
             return null;
     }
     return null;
+}
+/** fetch that turns a network failure into an error naming the request. */
+async function request(f, what, url, init) {
+    try {
+        return await f(url, init);
+    }
+    catch (err) {
+        const cause = err instanceof Error ? (err.cause?.message ?? err.message) : String(err);
+        throw new Error(`${what} failed: could not reach ${new URL(url).origin} (${cause}).`);
+    }
 }
 function apiError(what, res) {
     const hint = res.status === 403 || res.status === 404
@@ -138,7 +148,7 @@ export async function run(env, f = fetch, log = console.log) {
         return { action: "unchanged", commentId: existing.id, body, receiptCommit: found?.commit };
     }
     if (existing) {
-        const res = await f(`${api}/repos/${env.repository}/issues/comments/${existing.id}`, {
+        const res = await request(f, "update comment", `${api}/repos/${env.repository}/issues/comments/${existing.id}`, {
             method: "PATCH",
             headers: ghHeaders(env.token),
             body: JSON.stringify({ body }),
@@ -148,7 +158,7 @@ export async function run(env, f = fetch, log = console.log) {
         log(`pr-receipts: updated comment ${existing.id}`);
         return { action: "update", commentId: existing.id, body, receiptCommit: found?.commit };
     }
-    const res = await f(`${api}/repos/${env.repository}/issues/${pr.number}/comments`, {
+    const res = await request(f, "create comment", `${api}/repos/${env.repository}/issues/${pr.number}/comments`, {
         method: "POST",
         headers: ghHeaders(env.token),
         body: JSON.stringify({ body }),

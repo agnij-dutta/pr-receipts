@@ -96,9 +96,14 @@ export async function findSticky(
   token: string,
 ): Promise<{ id: number; body: string } | null> {
   for (let page = 1; page <= 20; page++) {
-    const res = await f(`${api}/repos/${repo}/issues/${pr}/comments?per_page=100&page=${page}`, {
-      headers: ghHeaders(token),
-    });
+    const res = await request(
+      f,
+      "list comments",
+      `${api}/repos/${repo}/issues/${pr}/comments?per_page=100&page=${page}`,
+      {
+        headers: ghHeaders(token),
+      },
+    );
     if (!res.ok) throw apiError("list comments", res);
     const items = (await res.json()) as { id: number; body?: string }[];
     const hit = items.find((c) => c.body?.startsWith(STICKY_MARKER));
@@ -106,6 +111,16 @@ export async function findSticky(
     if (items.length < 100) return null;
   }
   return null;
+}
+
+/** fetch that turns a network failure into an error naming the request. */
+async function request(f: Fetch, what: string, url: string, init: RequestInit): Promise<Response> {
+  try {
+    return await f(url, init);
+  } catch (err) {
+    const cause = err instanceof Error ? ((err.cause as Error | undefined)?.message ?? err.message) : String(err);
+    throw new Error(`${what} failed: could not reach ${new URL(url).origin} (${cause}).`);
+  }
 }
 
 function apiError(what: string, res: Response): Error {
@@ -184,7 +199,7 @@ export async function run(env: ActionEnv, f: Fetch = fetch, log = console.log): 
     return { action: "unchanged", commentId: existing.id, body, receiptCommit: found?.commit };
   }
   if (existing) {
-    const res = await f(`${api}/repos/${env.repository}/issues/comments/${existing.id}`, {
+    const res = await request(f, "update comment", `${api}/repos/${env.repository}/issues/comments/${existing.id}`, {
       method: "PATCH",
       headers: ghHeaders(env.token),
       body: JSON.stringify({ body }),
@@ -193,7 +208,7 @@ export async function run(env: ActionEnv, f: Fetch = fetch, log = console.log): 
     log(`pr-receipts: updated comment ${existing.id}`);
     return { action: "update", commentId: existing.id, body, receiptCommit: found?.commit };
   }
-  const res = await f(`${api}/repos/${env.repository}/issues/${pr.number}/comments`, {
+  const res = await request(f, "create comment", `${api}/repos/${env.repository}/issues/${pr.number}/comments`, {
     method: "POST",
     headers: ghHeaders(env.token),
     body: JSON.stringify({ body }),

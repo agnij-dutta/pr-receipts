@@ -466,6 +466,13 @@ test("action: fork PRs are skipped with zero API calls; a 403 explains the permi
     run(actionEnv(), mockFetch([], 403).f, () => {}),
     /pull-requests: write/,
   );
+  const offline = (async () => {
+    throw new TypeError("fetch failed", { cause: new Error("connect ECONNREFUSED") });
+  }) as unknown as typeof fetch;
+  await assert.rejects(
+    run(actionEnv(), offline, () => {}),
+    /list comments failed: could not reach https:\/\/api\.github\.test \(connect ECONNREFUSED\)/,
+  );
 });
 
 test("action: skips quietly when no receipt is attached, and on non-PR events", async () => {
