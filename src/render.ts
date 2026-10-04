@@ -1,47 +1,163 @@
-import { agentTime, duration, money, prettyModel, tokens } from "./format.js";
-import type { Receipt } from "./types.js";
+// Receipt read-back and rendering. sanitizeReceipt is the gate for anything
+// read from git notes or a file; renderMarkdown only ever sees its output.
 
+import { agentTime, duration, money, prettyModel, tokens } from "./format.js";
+import type { ModelLine, Receipt, SessionLine } from "./types.js";
+
+/** Hidden marker that identifies the one comment this tool owns on a PR. */
 export const STICKY_MARKER = "<!-- pr-receipts:sticky -->";
 
-/** Keys a receipt is allowed to carry. Anything else is dropped before rendering or storing. */
-const ALLOWED_TOP = new Set([
-  "schema", "generatedAt", "generator", "headline", "repo", "totals", "models",
-  "tools", "files", "sessions", "mapping", "pricing", "privacy",
-]);
+type Obj = Record<string, unknown>;
+const obj = (v: unknown): Obj => (v && typeof v === "object" && !Array.isArray(v) ? (v as Obj) : {});
+const arr = (v: unknown): unknown[] => (Array.isArray(v) ? v : []);
+const num = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) ? v : 0);
+/** Single-line, length-capped string. Newlines are removed so a value can't break out of a table row or an Actions output. */
+const str = (v: unknown, max = 200): string => (typeof v === "string" ? v.replace(/[\r\n]+/g, " ").slice(0, max) : "");
+const strOrNull = (v: unknown, max = 200): string | null => (typeof v === "string" ? str(v, max) : null);
 
 /**
- * Defensive scrub for receipts read from git notes / files (which a human or
- * another tool could have edited): keep only known top-level keys, drop file
- * paths / tool counts unless the privacy flags opted in, and cap strings.
+ * A repo-relative path we are willing to print: no absolute paths (POSIX,
+ * Windows drive or UNC), no home-relative paths, no ".." segments.
  */
-export function sanitizeReceipt(input: unknown): Receipt {
-  if (!input || typeof input !== "object") throw new Error("receipt is not an object");
-  const r: any = {};
-  for (const [k, v] of Object.entries(input as Record<string, unknown>)) if (ALLOWED_TOP.has(k)) r[k] = v;
-  if (r.schema !== "pr-receipts/v1") throw new Error(`unsupported receipt schema: ${String(r.schema)}`);
-  if (!r.privacy?.toolCounts) delete r.tools;
-  if (!r.privacy?.filePaths && r.files) delete r.files.paths;
-  if (Array.isArray(r.files?.paths)) {
-    r.files.paths = r.files.paths.filter(
-      (p: unknown) => typeof p === "string" && p.length < 300 && !p.startsWith("/") && !p.startsWith(".."),
-    );
-  }
-  if (Array.isArray(r.mapping?.notes)) {
-    r.mapping.notes = r.mapping.notes.filter((n: unknown) => typeof n === "string").map((n: string) => n.slice(0, 300));
-  }
-  if (typeof r.headline === "string") r.headline = r.headline.slice(0, 200);
-  r.privacy = { ...(r.privacy ?? {}), contentIncluded: false };
-  return r as Receipt;
+export function isSafeRelativePath(p: unknown): p is string {
+  if (typeof p !== "string" || p.length === 0 || p.length >= 300) return false;
+  if (p.startsWith("/") || p.startsWith("~") || p.startsWith("\\") || /^[a-zA-Z]:/.test(p)) return false;
+  return !p.split(/[\\/]/).includes("..");
 }
 
-const esc = (s: string) => String(s).replace(/[|<>`]/g, (c) => `\\${c}`);
+const counts = (v: unknown) => {
+  const o = obj(v);
+  return {
+    inputTokens: num(o.inputTokens),
+    outputTokens: num(o.outputTokens),
+    cacheReadTokens: num(o.cacheReadTokens),
+    cacheWrite5mTokens: num(o.cacheWrite5mTokens),
+    cacheWrite1hTokens: num(o.cacheWrite1hTokens),
+  };
+};
 
+/**
+ * Defensive rebuild of a receipt read from git notes or a file (which a human
+ * or another tool could have edited). The output is constructed field by field
+ * from the v1 schema: unknown keys anywhere are dropped, numbers that aren't
+ * numbers become 0, strings are single-line and capped, file paths and tool
+ * counts survive only if the receipt's own privacy flags opted in, and file
+ * paths must be repo-relative. Throws on a wrong schema rather than guessing.
+ */
+export function sanitizeReceipt(input: unknown): Receipt {
+  if (!input || typeof input !== "object" || Array.isArray(input)) throw new Error("receipt is not an object");
+  const r = input as Obj;
+  if (r.schema !== "pr-receipts/v1") throw new Error(`unsupported receipt schema: ${str(String(r.schema), 60)}`);
+
+  const privacy = obj(r.privacy);
+  const toolCounts = privacy.toolCounts === true;
+  const filePaths = privacy.filePaths === true;
+  const repo = obj(r.repo);
+  const window = obj(repo.window);
+  const totals = obj(r.totals);
+  const files = obj(r.files);
+  const mapping = obj(r.mapping);
+  const pricing = obj(r.pricing);
+  const confidence = ["high", "medium", "low", "none"].includes(mapping.confidence as string)
+    ? (mapping.confidence as Receipt["mapping"]["confidence"])
+    : "none";
+
+  const out: Receipt = {
+    schema: "pr-receipts/v1",
+    generatedAt: str(r.generatedAt, 40),
+    generator: str(r.generator, 60),
+    headline: str(r.headline),
+    repo: {
+      name: str(repo.name, 100),
+      branch: str(repo.branch),
+      base: strOrNull(repo.base),
+      headSha: strOrNull(repo.headSha, 64),
+      commitRange: strOrNull(repo.commitRange),
+      commits: num(repo.commits),
+      window: { start: str(window.start, 40), end: str(window.end, 40) },
+    },
+    totals: {
+      ...counts(totals),
+      costUSD: num(totals.costUSD),
+      apiRequests: num(totals.apiRequests),
+      subagentRequests: num(totals.subagentRequests),
+      turns: num(totals.turns),
+      agentTimeMs: num(totals.agentTimeMs),
+      activeTimeMs: num(totals.activeTimeMs),
+      toolCalls: num(totals.toolCalls),
+      apiErrors: num(totals.apiErrors),
+      refusalFallbacks: num(totals.refusalFallbacks),
+      webSearches: num(totals.webSearches),
+    },
+    models: arr(r.models).map((m): ModelLine => {
+      const o = obj(m);
+      return {
+        model: str(o.model, 100),
+        requests: num(o.requests),
+        ...counts(o),
+        costUSD: o.costUSD === null ? null : num(o.costUSD),
+      };
+    }),
+    files: {
+      count: num(files.count),
+      ...(filePaths && Array.isArray(files.paths) ? { paths: files.paths.filter(isSafeRelativePath) } : {}),
+    },
+    sessions: arr(r.sessions).map((s): SessionLine => {
+      const o = obj(s);
+      return {
+        id: str(o.id, 36),
+        requests: num(o.requests),
+        costUSD: num(o.costUSD),
+        firstSeen: str(o.firstSeen, 40),
+        lastSeen: str(o.lastSeen, 40),
+      };
+    }),
+    mapping: {
+      byBranch: num(mapping.byBranch),
+      byCwd: num(mapping.byCwd),
+      byFiles: num(mapping.byFiles),
+      excludedOtherBranch: num(mapping.excludedOtherBranch),
+      confidence,
+      notes: arr(mapping.notes)
+        .filter((n) => typeof n === "string")
+        .map((n) => str(n, 300)),
+    },
+    pricing: {
+      source: str(pricing.source),
+      fetchedAt: str(pricing.fetchedAt, 40),
+      unpricedModels: arr(pricing.unpricedModels)
+        .filter((m) => typeof m === "string")
+        .map((m) => str(m, 100)),
+    },
+    privacy: { contentIncluded: false, toolCounts, filePaths },
+  };
+  if (toolCounts && r.tools && typeof r.tools === "object") {
+    out.tools = Object.fromEntries(Object.entries(obj(r.tools)).map(([k, v]) => [str(k, 100), num(v)]));
+  }
+  return out;
+}
+
+/**
+ * Escape a value for GitHub Markdown: table pipes, HTML angle brackets,
+ * backticks, and a leading "@" (a zero-width space after it, so a crafted
+ * value cannot ping users or teams).
+ */
+const esc = (s: string) =>
+  String(s)
+    .replace(/[|<>`]/g, (c) => `\\${c}`)
+    .replace(/(^|[\s([])@/g, "$1@\u200b");
+
+/** Options for `renderMarkdown`. */
 export interface RenderOptions {
   /** Include the hidden sticky marker (the GitHub Action does). */
   sticky?: boolean;
   maxFiles?: number;
 }
 
+/**
+ * Render a receipt as the PR comment body. Every string taken from the receipt
+ * goes through `esc`; numbers go through the format helpers.
+ */
 export function renderMarkdown(r: Receipt, opts: RenderOptions = {}): string {
   const t = r.totals;
   const lines: string[] = [];
@@ -52,9 +168,9 @@ export function renderMarkdown(r: Receipt, opts: RenderOptions = {}): string {
   lines.push("");
   if (t.apiRequests === 0) {
     lines.push(
-      `No local Claude Code usage matched \`${esc(r.repo.branch)}\` between ${r.repo.window.start} and ${r.repo.window.end}.`,
+      `No local Claude Code usage matched \`${esc(r.repo.branch)}\` between ${esc(r.repo.window.start)} and ${esc(r.repo.window.end)}.`,
     );
-    return lines.join("\n") + "\n";
+    return `${lines.join("\n")}\n`;
   }
 
   const promptSide = t.inputTokens + t.cacheReadTokens + t.cacheWrite5mTokens + t.cacheWrite1hTokens;
@@ -66,7 +182,9 @@ export function renderMarkdown(r: Receipt, opts: RenderOptions = {}): string {
   lines.push(`| Models | ${r.models.map((m) => esc(prettyModel(m.model))).join(", ")} |`);
   lines.push(`| Human turns | ${t.turns} |`);
   lines.push(`| API requests | ${t.apiRequests}${t.subagentRequests ? ` (${t.subagentRequests} by subagents)` : ""} |`);
-  lines.push(`| Retries | ${t.apiErrors} API error retries${t.refusalFallbacks ? `, ${t.refusalFallbacks} refusal fallbacks` : ""} |`);
+  lines.push(
+    `| Retries | ${t.apiErrors} API error retries${t.refusalFallbacks ? `, ${t.refusalFallbacks} refusal fallbacks` : ""} |`,
+  );
   lines.push(`| Tool calls | ${t.toolCalls} |`);
   lines.push(`| Files touched | ${r.files.count} |`);
   lines.push(`| Sessions | ${r.sessions.length} |`);
@@ -100,7 +218,7 @@ export function renderMarkdown(r: Receipt, opts: RenderOptions = {}): string {
     lines.push("</details>");
   }
 
-  if (r.files.paths && r.files.paths.length) {
+  if (r.files.paths?.length) {
     const max = opts.maxFiles ?? 25;
     lines.push("");
     lines.push(`<details><summary>Files touched by the agent (${r.files.count})</summary>`);
@@ -117,14 +235,14 @@ export function renderMarkdown(r: Receipt, opts: RenderOptions = {}): string {
   lines.push(
     `- Branch \`${esc(r.repo.branch)}\`${r.repo.commitRange ? `, commits \`${esc(r.repo.commitRange)}\` (${r.repo.commits})` : ""}`,
   );
-  lines.push(`- Window ${r.repo.window.start} to ${r.repo.window.end}`);
+  lines.push(`- Window ${esc(r.repo.window.start)} to ${esc(r.repo.window.end)}`);
   lines.push(
-    `- Matched requests: ${r.mapping.byBranch} by git branch, ${r.mapping.byCwd} by working directory + time${r.mapping.byFiles ? `, ${r.mapping.byFiles} by edited files` : ""}. Confidence: **${r.mapping.confidence}**`,
+    `- Matched requests: ${r.mapping.byBranch} by git branch, ${r.mapping.byCwd} by working directory + time${r.mapping.byFiles ? `, ${r.mapping.byFiles} by edited files` : ""}. Confidence: **${esc(r.mapping.confidence)}**`,
   );
   for (const n of r.mapping.notes) lines.push(`- ${esc(n)}`);
   lines.push(`- Sessions: ${r.sessions.map((s) => `\`${esc(s.id)}\``).join(", ")}`);
   lines.push(
-    `- Prices from ${r.pricing.source} (fetched ${r.pricing.fetchedAt}). API list prices; subscription plans pay differently.`,
+    `- Prices from ${esc(r.pricing.source)} (fetched ${esc(r.pricing.fetchedAt)}). API list prices, not what a Pro/Max subscription pays.`,
   );
   lines.push(
     "- Lower bound: Claude Code side calls that never reach the transcript (titles, summaries, permission classifier) are not counted.",
@@ -135,5 +253,5 @@ export function renderMarkdown(r: Receipt, opts: RenderOptions = {}): string {
   lines.push(
     `<sub>Usage metadata only. No prompts, code, or tool output leave the machine. Generated by ${esc(r.generator)}.</sub>`,
   );
-  return lines.join("\n") + "\n";
+  return `${lines.join("\n")}\n`;
 }

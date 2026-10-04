@@ -7,22 +7,31 @@ import { git, tryGit } from "./git.js";
 import { sanitizeReceipt } from "./render.js";
 import type { Receipt } from "./types.js";
 
+/** Notes ref receipts live under: refs/notes/pr-receipts. */
 export const DEFAULT_NOTES_REF = "pr-receipts";
 
 const fullRef = (ref: string) => (ref.startsWith("refs/") ? ref : `refs/notes/${ref}`);
 
+/** Store `receipt` as the note on `commit`, replacing any previous receipt there. */
 export function writeNote(cwd: string, commit: string, receipt: Receipt, ref = DEFAULT_NOTES_REF): void {
-  const body = JSON.stringify(receipt, null, 2) + "\n";
+  const body = `${JSON.stringify(receipt, null, 2)}\n`;
   git(["notes", `--ref=${fullRef(ref)}`, "add", "-f", "-F", "-", commit], cwd, body);
 }
 
+/**
+ * Read and sanitize the receipt on `commit`, or null if that commit has no note.
+ * A note that exists but is not a valid receipt throws: reporting "no receipt"
+ * there would hide a corrupted or tampered note.
+ */
 export function readNote(cwd: string, commit: string, ref = DEFAULT_NOTES_REF): Receipt | null {
   const raw = tryGit(["notes", `--ref=${fullRef(ref)}`, "show", commit], cwd);
   if (!raw) return null;
   try {
     return sanitizeReceipt(JSON.parse(raw));
-  } catch {
-    return null;
+  } catch (err) {
+    throw new Error(
+      `The ${fullRef(ref)} note on ${commit.slice(0, 12)} is not a valid receipt (${err instanceof Error ? err.message : String(err)}). Re-run \`pr-receipts attach\` or remove it with \`git notes --ref=${fullRef(ref)} remove ${commit.slice(0, 12)}\`.`,
+    );
   }
 }
 
@@ -37,9 +46,19 @@ export function findReceipt(
   base: string | null,
   ref = DEFAULT_NOTES_REF,
 ): { commit: string; receipt: Receipt } | null {
+  for (const [label, rev] of [
+    ["head", head],
+    ["base", base],
+  ] as const) {
+    if (rev && tryGit(["cat-file", "-e", `${rev}^{commit}`], cwd) === null) {
+      // In CI this is almost always a shallow checkout; treating it as "no receipt" would hide the cause.
+      throw new Error(
+        `PR ${label} commit ${rev.slice(0, 12)} is not in this clone. Check out with \`fetch-depth: 0\` so the PR's commits (and their notes) are available.`,
+      );
+    }
+  }
   const range = base ? `${base}..${head}` : head;
-  const list = tryGit(["rev-list", "--max-count=200", range], cwd);
-  if (!list) return null;
+  const list = git(["rev-list", "--max-count=200", range], cwd);
   for (const sha of list.split("\n").filter(Boolean)) {
     const r = readNote(cwd, sha, ref);
     if (r) return { commit: sha, receipt: r };
@@ -47,17 +66,28 @@ export function findReceipt(
   return null;
 }
 
-/** Push the notes ref. If the remote has diverged, merge theirs into ours (ours wins per commit) and retry. */
+/**
+ * Push the notes ref. If the push is rejected because the remote ref moved
+ * (another machine attached a receipt), fetch theirs, merge it into ours with
+ * the "ours" strategy (on the same commit, our receipt wins), and push again.
+ * Other failures (auth, network) are rethrown as-is.
+ */
 export function pushNotes(cwd: string, remote = "origin", ref = DEFAULT_NOTES_REF): void {
   const r = fullRef(ref);
   try {
     git(["push", remote, `${r}:${r}`], cwd);
     return;
-  } catch {
-    const tmp = `refs/notes/${ref.replace(/^refs\/notes\//, "")}-remote`;
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (!/rejected|non-fast-forward|fetch first/i.test(msg)) throw err;
+  }
+  const tmp = `${r}-remote`;
+  try {
     git(["fetch", remote, `+${r}:${tmp}`], cwd);
     git(["notes", `--ref=${r}`, "merge", "-s", "ours", tmp], cwd);
     git(["push", remote, `${r}:${r}`], cwd);
+  } finally {
+    tryGit(["update-ref", "-d", tmp], cwd);
   }
 }
 
@@ -68,6 +98,10 @@ const HOOK_MARK = "# pr-receipts hook";
  * pushes the notes ref alongside. Git has no post-push hook; pre-push runs right
  * before the branch goes up, which is the moment we want. The env guard stops
  * the inner `git push` of the notes ref from re-triggering the hook.
+ *
+ * The hook attaches to the CURRENT branch, which is what `git push` pushes in
+ * the common case. It never blocks the push: a failed attach is logged only.
+ * If an existing hook ends with `exit`, the appended snippet will not run.
  */
 export function installHook(cwd: string, bin = "pr-receipts"): string {
   const hooksDir = git(["rev-parse", "--git-path", "hooks"], cwd);
@@ -84,9 +118,9 @@ fi
   if (existsSync(path)) {
     const cur = readFileSync(path, "utf8");
     if (cur.includes(HOOK_MARK)) return path;
-    writeFileSync(path, cur.trimEnd() + "\n\n" + snippet);
+    writeFileSync(path, `${cur.trimEnd()}\n\n${snippet}`);
   } else {
-    writeFileSync(path, "#!/bin/sh\n" + snippet);
+    writeFileSync(path, `#!/bin/sh\n${snippet}`);
   }
   chmodSync(path, 0o755);
   return path;

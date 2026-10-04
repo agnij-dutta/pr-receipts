@@ -53,8 +53,20 @@ function usage(u: Usage) {
   };
   base.iterations = u.fallback
     ? [
-        { type: "message", input_tokens: 1, output_tokens: 2, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 },
-        { type: "fallback_message", input_tokens: base.input_tokens, output_tokens: base.output_tokens, cache_read_input_tokens: base.cache_read_input_tokens, cache_creation_input_tokens: 0 },
+        {
+          type: "message",
+          input_tokens: 1,
+          output_tokens: 2,
+          cache_read_input_tokens: 0,
+          cache_creation_input_tokens: 0,
+        },
+        {
+          type: "fallback_message",
+          input_tokens: base.input_tokens,
+          output_tokens: base.output_tokens,
+          cache_read_input_tokens: base.cache_read_input_tokens,
+          cache_creation_input_tokens: 0,
+        },
       ]
     : [{ type: "message", input_tokens: base.input_tokens, output_tokens: base.output_tokens }];
   return base;
@@ -134,7 +146,7 @@ export const system = (c: Ctx, minutes: number, subtype: string, extra: object =
 });
 
 const write = (file: string, records: object[]) =>
-  writeFileSync(file, records.map((r) => JSON.stringify(r)).join("\n") + "\n");
+  writeFileSync(file, `${records.map((r) => JSON.stringify(r)).join("\n")}\n`);
 
 const encode = (p: string) => p.replace(/[/.]/g, "-");
 
@@ -197,20 +209,48 @@ export function buildWorld(root = mkdtempSync(join(tmpdir(), "pr-receipts-"))): 
     ...assistant(A, 1, "msg_A1", "claude-opus-5-5", { input: 10, output: 1000, read: 100_000, w1: 20_000 }, [
       { type: "thinking", thinking: SECRETS[2], signature: "sig" },
       { type: "text", text: SECRETS[3] },
-      { type: "tool_use", id: "toolu_A1", name: "Edit", input: { file_path: join(repo, "src", "a.ts"), old_string: SECRETS[4], new_string: "x" } },
+      {
+        type: "tool_use",
+        id: "toolu_A1",
+        name: "Edit",
+        input: { file_path: join(repo, "src", "a.ts"), old_string: SECRETS[4], new_string: "x" },
+      },
     ]),
     toolResult(A, 2, "toolu_A1", SECRETS[5]),
-    system(A, 3, "api_error", { level: "error", retryAttempt: 1, maxRetries: 10, retryInMs: 500, error: { message: "overloaded" } }),
+    system(A, 3, "api_error", {
+      level: "error",
+      retryAttempt: 1,
+      maxRetries: 10,
+      retryInMs: 500,
+      error: { message: "overloaded" },
+    }),
     ...assistant(A, 4, "msg_A2", "claude-opus-5-5[1m]", { input: 5, output: 2000, read: 120_000, w5: 4_000 }, [
       { type: "tool_use", id: "toolu_A2", name: "Bash", input: { command: SECRETS[6] } },
-      { type: "tool_use", id: "toolu_A3", name: "Write", input: { file_path: "/Users/someone/.aws/credentials", content: SECRETS[1] } },
-      { type: "tool_use", id: "toolu_A4", name: "Write", input: { file_path: join(repo, "src", "b.ts"), content: SECRETS[4] } },
+      {
+        type: "tool_use",
+        id: "toolu_A3",
+        name: "Write",
+        input: { file_path: "/Users/someone/.aws/credentials", content: SECRETS[1] },
+      },
+      {
+        type: "tool_use",
+        id: "toolu_A4",
+        name: "Write",
+        input: { file_path: join(repo, "src", "b.ts"), content: SECRETS[4] },
+      },
     ]),
     // A local synthetic placeholder: never priced, never counted.
-    ...assistant(A, 5, "msg_SYN", "<synthetic>", { input: 0, output: 0 }, [{ type: "text", text: "No response requested." }]),
+    ...assistant(A, 5, "msg_SYN", "<synthetic>", { input: 0, output: 0 }, [
+      { type: "text", text: "No response requested." },
+    ]),
     // Fast mode request with a refusal fallback.
     ...assistant(A, 6, "msg_A3", "claude-opus-5-5", { input: 100, output: 500, speed: "fast", fallback: true }, [
-      { type: "tool_use", id: "toolu_A5", name: "mcp__gmail__send_email", input: { to: "x@example.com", body: SECRETS[0] } },
+      {
+        type: "tool_use",
+        id: "toolu_A5",
+        name: "mcp__gmail__send_email",
+        input: { to: "x@example.com", body: SECRETS[0] },
+      },
     ]),
     system(A, 20, "turn_duration", { durationMs: 20 * 60_000, messageCount: 12 }),
     { type: "cost-state", sessionId: A.sessionId, totalCostUSD: 1.23, modelUsage: {} },
@@ -223,21 +263,30 @@ export function buildWorld(root = mkdtempSync(join(tmpdir(), "pr-receipts-"))): 
       { type: "tool_use", id: "toolu_S1", name: "Grep", input: { pattern: SECRETS[4] } },
     ]),
   ]);
-  writeFileSync(join(dirA, A.sessionId, "subagents", "agent-a0000000000000001.meta.json"), JSON.stringify({ agentType: "Explore" }));
+  writeFileSync(
+    join(dirA, A.sessionId, "subagents", "agent-a0000000000000001.meta.json"),
+    JSON.stringify({ agentType: "Explore" }),
+  );
 
   // B: launched outside git (gitBranch HEAD) but cwd in the repo; one record in window, one far outside.
   const B: Ctx = { sessionId: "bbbbbbbb-2222-4000-8000-000000000002", cwd: repo, gitBranch: "HEAD" };
   write(join(dirA, `${B.sessionId}.jsonl`), [
     userPrompt(B, 40, `another ask ${SECRETS[0]}`),
-    ...assistant(B, 41, "msg_B1", "claude-sonnet-5", { input: 2000, output: 300 }, [{ type: "text", text: SECRETS[3] }]),
-    ...assistant(B, 2000, "msg_B_LATE", "claude-sonnet-5", { input: 999_999, output: 999_999 }, [{ type: "text", text: "late" }]),
+    ...assistant(B, 41, "msg_B1", "claude-sonnet-5", { input: 2000, output: 300 }, [
+      { type: "text", text: SECRETS[3] },
+    ]),
+    ...assistant(B, 2000, "msg_B_LATE", "claude-sonnet-5", { input: 999_999, output: 999_999 }, [
+      { type: "text", text: "late" },
+    ]),
   ]);
 
   // C: same repo, different branch. Excluded.
   const C: Ctx = { sessionId: "cccccccc-3333-4000-8000-000000000003", cwd: repo, gitBranch: "main" };
   write(join(dirA, `${C.sessionId}.jsonl`), [
     userPrompt(C, 45, "work on main"),
-    ...assistant(C, 46, "msg_C1", "claude-opus-5", { input: 50_000, output: 5_000 }, [{ type: "text", text: "main work" }]),
+    ...assistant(C, 46, "msg_C1", "claude-opus-5", { input: 50_000, output: 5_000 }, [
+      { type: "text", text: "main work" },
+    ]),
   ]);
 
   // D: launched from an unrelated dir, edits a file in the repo. Only counted with --loose.
@@ -247,7 +296,12 @@ export function buildWorld(root = mkdtempSync(join(tmpdir(), "pr-receipts-"))): 
   write(join(dirD, `${D.sessionId}.jsonl`), [
     userPrompt(D, 50, `from desktop ${SECRETS[0]}`),
     ...assistant(D, 51, "msg_D1", "claude-fable-5-1", { input: 100, output: 1000, read: 40_000 }, [
-      { type: "tool_use", id: "toolu_D1", name: "Edit", input: { file_path: join(repo, "src", "b.ts"), old_string: SECRETS[4], new_string: "y" } },
+      {
+        type: "tool_use",
+        id: "toolu_D1",
+        name: "Edit",
+        input: { file_path: join(repo, "src", "b.ts"), old_string: SECRETS[4], new_string: "y" },
+      },
     ]),
     ...assistant(D, 52, "msg_D2", "claude-mystery-9", { input: 10, output: 10 }, [{ type: "text", text: "unpriced" }]),
   ]);
@@ -265,7 +319,12 @@ export function buildWorld(root = mkdtempSync(join(tmpdir(), "pr-receipts-"))): 
   write(join(dirA, `${E.sessionId}.jsonl`), [
     userPrompt({ ...E, cwd: repo }, 55, "work in a worktree"),
     ...assistant(E, 56, "msg_E1", "claude-opus-5-5", { input: 10, output: 100 }, [
-      { type: "tool_use", id: "toolu_E1", name: "Write", input: { file_path: join(wtPath, "src", "e.ts"), content: "x" } },
+      {
+        type: "tool_use",
+        id: "toolu_E1",
+        name: "Write",
+        input: { file_path: join(wtPath, "src", "e.ts"), content: "x" },
+      },
     ]),
   ]);
 

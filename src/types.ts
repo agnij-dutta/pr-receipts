@@ -1,6 +1,7 @@
 // Shared types. Nothing in here ever holds transcript CONTENT (prompts,
 // assistant text, tool inputs/outputs). Only usage metadata.
 
+/** Token counters as reported in `message.usage`, with cache writes split by TTL. */
 export interface TokenCounts {
   inputTokens: number;
   outputTokens: number;
@@ -38,14 +39,30 @@ export interface MetaEvent {
   durationMs?: number;
 }
 
+/** Why a request was attributed to the branch. See README "Attribution rules". */
 export type MatchReason = "branch" | "cwd" | "files";
 
+/** Per-model subtotal on a receipt. */
 export interface ModelLine extends TokenCounts {
   model: string;
   requests: number;
   costUSD: number | null; // null = unpriced model
 }
 
+/** Per-session subtotal on a receipt. `id` is the first 8 chars of the session UUID. */
+export interface SessionLine {
+  id: string;
+  requests: number;
+  costUSD: number;
+  firstSeen: string;
+  lastSeen: string;
+}
+
+/**
+ * The receipt stored in git notes and rendered on the PR. Schema
+ * "pr-receipts/v1". Every field is metadata; see `sanitizeReceipt` for the
+ * read-back allow-list.
+ */
 export interface Receipt {
   schema: "pr-receipts/v1";
   generatedAt: string;
@@ -76,7 +93,7 @@ export interface Receipt {
   /** Opt-in only (--include-tools). Tool names can reveal which MCP services were used. */
   tools?: Record<string, number>;
   files: { count: number; paths?: string[] };
-  sessions: { id: string; requests: number; costUSD: number; firstSeen: string; lastSeen: string }[];
+  sessions: SessionLine[];
   mapping: {
     byBranch: number;
     byCwd: number;

@@ -1,21 +1,25 @@
 #!/usr/bin/env node
+// pr-receipts CLI. Thin: parses flags and calls collect / notes / render / action.
 import { readFileSync, writeFileSync } from "node:fs";
 import { parseArgs } from "node:util";
-import { collect } from "./collect.js";
-import { currentBranch, repoRoot, revParse } from "./git.js";
+import { envFromProcess, run } from "./action/main.js";
+import { collect, GENERATOR } from "./collect.js";
+import { currentBranch, detectBase, repoRoot, revParse, tryGit } from "./git.js";
 import { DEFAULT_NOTES_REF, findReceipt, installHook, pushNotes, readNote, writeNote } from "./notes.js";
 import { renderMarkdown, sanitizeReceipt } from "./render.js";
-import { envFromProcess, run } from "./action/main.js";
 const HELP = `pr-receipts: what did this PR cost in agent time and tokens?
 
 Usage:
   pr-receipts collect [--branch <b>] [--since <commit>] [--base <ref>] [--from <iso>] [--to <iso|now>]
-                      [--include-tools] [--no-file-paths] [--loose] [--out receipt.json]
+                      [--lookback <min>] [--tail <min>] [--include-tools] [--no-file-paths] [--loose]
+                      [--out receipt.json]
   pr-receipts render  [--in receipt.json] [--sticky]          Markdown receipt to stdout
   pr-receipts attach  [--branch <b>] [collect flags] [--in receipt.json] [--push] [--remote origin]
-  pr-receipts show    [--commit <sha>] [--base <ref>]           Render the receipt stored in git notes
+  pr-receipts show    [--commit <sha>] [--branch <b>] [--base <ref>] [--json]
+                                                                Render the receipt stored in git notes
   pr-receipts install-hook                                      Add a pre-push hook that attaches + pushes receipts
   pr-receipts comment --event <event.json> [--dry-run]          Run the GitHub Action logic locally
+  pr-receipts --version
 
 Common flags:
   --repo <path>        Repository (default: cwd)
@@ -31,6 +35,10 @@ async function main(argv) {
         console.log(HELP);
         return 0;
     }
+    if (cmd === "-v" || cmd === "--version") {
+        console.log(GENERATOR.replace("pr-receipts@", ""));
+        return 0;
+    }
     const { values: v } = parseArgs({
         args: rest,
         allowPositionals: false,
@@ -42,6 +50,7 @@ async function main(argv) {
             from: { type: "string" },
             to: { type: "string" },
             lookback: { type: "string" },
+            tail: { type: "string" },
             "projects-dir": { type: "string" },
             pricing: { type: "string" },
             "include-tools": { type: "boolean" },
@@ -61,6 +70,14 @@ async function main(argv) {
     });
     const cwd = v.repo ?? process.cwd();
     const notesRef = v["notes-ref"] ?? DEFAULT_NOTES_REF;
+    const minutesFlag = (name, raw) => {
+        if (raw === undefined)
+            return undefined;
+        const n = Number(raw);
+        if (raw.trim() === "" || !Number.isFinite(n) || n < 0)
+            throw new Error(`--${name} must be a non-negative number of minutes, got "${raw}".`);
+        return n;
+    };
     const collectOpts = () => ({
         cwd,
         branch: v.branch,
@@ -68,7 +85,8 @@ async function main(argv) {
         base: v.base,
         from: v.from,
         to: v.to,
-        lookbackMinutes: v.lookback ? Number(v.lookback) : undefined,
+        lookbackMinutes: minutesFlag("lookback", v.lookback),
+        tailMinutes: minutesFlag("tail", v.tail),
         projectsDir: v["projects-dir"],
         pricingPath: v.pricing,
         includeTools: v["include-tools"],
@@ -80,7 +98,7 @@ async function main(argv) {
         case "collect": {
             const r = await collect(collectOpts());
             const out = v.out ?? "receipt.json";
-            writeFileSync(out, JSON.stringify(r, null, 2) + "\n");
+            writeFileSync(out, `${JSON.stringify(r, null, 2)}\n`);
             console.error(`${r.headline}  (${r.totals.apiRequests} requests, confidence ${r.mapping.confidence}) -> ${out}`);
             return 0;
         }
@@ -104,17 +122,25 @@ async function main(argv) {
         }
         case "show": {
             const root = repoRoot(cwd);
-            const found = v.commit
+            const commit = v.commit;
+            const found = commit
                 ? (() => {
-                    const r = readNote(root, v.commit, notesRef);
-                    return r ? { commit: v.commit, receipt: r } : null;
+                    const r = readNote(root, commit, notesRef);
+                    return r ? { commit, receipt: r } : null;
                 })()
-                : findReceipt(root, v.branch ?? "HEAD", v.base ?? null, notesRef);
+                : (() => {
+                    // Scope the search to the branch's own commits; without a base, any
+                    // ancestor's receipt (from an older, merged branch) would be shown.
+                    const head = v.branch ?? "HEAD";
+                    const base = v.base ?? detectBase(root);
+                    const sameAsHead = base !== null && tryGit(["rev-parse", base], root) === tryGit(["rev-parse", head], root);
+                    return findReceipt(root, head, sameAsHead ? null : base, notesRef);
+                })();
             if (!found) {
                 console.error("pr-receipts: no receipt found.");
                 return 1;
             }
-            process.stdout.write(v.json ? JSON.stringify(found.receipt, null, 2) + "\n" : renderMarkdown(found.receipt));
+            process.stdout.write(v.json ? `${JSON.stringify(found.receipt, null, 2)}\n` : renderMarkdown(found.receipt));
             return 0;
         }
         case "install-hook": {

@@ -1,5 +1,5 @@
 name: PR Receipts
-description: Post a sticky "what did this PR cost" comment from a receipt stored in git notes by `pr-receipts attach --push`.
+description: "Sticky PR comment with what an agent-written PR cost: tokens, list-price dollars and agent time, from git notes."
 author: Agnij Dutta
 branding:
   icon: file-text
@@ -7,7 +7,7 @@ branding:
 
 inputs:
   github-token:
-    description: Token used to read and write PR comments. Needs `pull-requests: write`.
+    description: Token used to list, create and update PR comments. Needs `pull-requests: write`. Not used in dry-run.
     default: ${{ github.token }}
   notes-ref:
     description: Git notes ref holding receipts (without the refs/notes/ prefix).
@@ -32,9 +32,21 @@ runs:
       shell: bash
       env:
         NOTES_REF: ${{ inputs.notes-ref }}
+      # ls-remote --exit-code returns 2 only when the ref is absent. Any other
+      # failure (auth, network) fails the step instead of looking like "no receipt".
       run: |
-        git fetch --no-tags origin "+refs/notes/${NOTES_REF}:refs/notes/${NOTES_REF}" \
-          || echo "pr-receipts: no refs/notes/${NOTES_REF} on origin yet"
+        set +e
+        git ls-remote --exit-code origin "refs/notes/${NOTES_REF}" > /dev/null
+        status=$?
+        set -e
+        if [ "$status" -eq 2 ]; then
+          echo "pr-receipts: no refs/notes/${NOTES_REF} on origin yet"
+        elif [ "$status" -ne 0 ]; then
+          echo "::error::pr-receipts: git ls-remote origin failed (exit $status)"
+          exit "$status"
+        else
+          git fetch --no-tags origin "+refs/notes/${NOTES_REF}:refs/notes/${NOTES_REF}"
+        fi
     - name: Upsert sticky comment
       id: comment
       shell: bash

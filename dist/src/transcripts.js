@@ -7,9 +7,9 @@
 // text, thinking, tool inputs (other than file_path), or tool results. Raw
 // parsed objects are dropped as soon as the fields are pulled out.
 import { createReadStream, existsSync, readdirSync, statSync } from "node:fs";
-import { createInterface } from "node:readline";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { createInterface } from "node:readline";
 /** Tools whose input carries a path we may record (path only, never content). */
 const FILE_TOOLS = {
     Edit: "file_path",
@@ -17,11 +17,16 @@ const FILE_TOOLS = {
     Write: "file_path",
     NotebookEdit: "notebook_path",
 };
+/** Where Claude Code keeps transcripts: `$CLAUDE_CONFIG_DIR/projects`, else `~/.claude/projects`. */
 export function defaultProjectsDir() {
     const base = process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), ".claude");
     return join(base, "projects");
 }
-/** All transcript files, optionally only those modified at/after `since`. */
+/**
+ * All transcript files, optionally only those modified at/after `since`.
+ * A file holding a record newer than `since` must have been written after it,
+ * so the mtime filter never drops a relevant file; it just skips old ones.
+ */
 export function listTranscriptFiles(projectsDir, since) {
     if (!existsSync(projectsDir))
         return [];
@@ -86,7 +91,9 @@ export async function parseTranscripts(files, window) {
             if (!line || line.length < 10)
                 continue;
             // Cheap prefilter before JSON.parse.
-            if (!line.includes('"type":"assistant"') && !line.includes('"type":"user"') && !line.includes('"type":"system"')) {
+            if (!line.includes('"type":"assistant"') &&
+                !line.includes('"type":"user"') &&
+                !line.includes('"type":"system"')) {
                 continue;
             }
             let o;
@@ -98,8 +105,10 @@ export async function parseTranscripts(files, window) {
             }
             const type = o?.type;
             const ts = str(o?.timestamp);
-            const t = ts ? Date.parse(ts) : NaN;
-            if (!Number.isNaN(t) && (t < startMs || t > endMs))
+            const t = ts ? Date.parse(ts) : Number.NaN;
+            // With a window, a record we cannot place in time is excluded rather than
+            // silently counted: the window is the main attribution signal.
+            if (window && (Number.isNaN(t) || t < startMs || t > endMs))
                 continue;
             const base = {
                 sessionId: str(o.sessionId),
@@ -111,7 +120,8 @@ export async function parseTranscripts(files, window) {
                 extractAssistant(o, base, usage);
             }
             else if (type === "user") {
-                if (o.isSidechain || o.isMeta)
+                // Subagent briefs, meta records and compaction summaries are not human turns.
+                if (o.isSidechain || o.isMeta || o.isCompactSummary)
                     continue;
                 if (isHumanPrompt(o?.message?.content))
                     meta.push({ kind: "prompt", ...base });
@@ -148,7 +158,7 @@ function extractAssistant(o, base, usage) {
     const u = m.usage ?? {};
     const cc = u.cache_creation ?? {};
     const totalWrite = num(u.cache_creation_input_tokens);
-    let w1h = num(cc.ephemeral_1h_input_tokens);
+    const w1h = num(cc.ephemeral_1h_input_tokens);
     let w5m = num(cc.ephemeral_5m_input_tokens);
     if (w1h + w5m === 0 && totalWrite > 0)
         w5m = totalWrite; // older records: no TTL split
@@ -184,7 +194,7 @@ function extractAssistant(o, base, usage) {
     ev.refusalFallbacks = Math.max(ev.refusalFallbacks, fallbacks);
     const content = Array.isArray(m.content) ? m.content : [];
     for (const b of content) {
-        if (!b || b.type !== "tool_use")
+        if (b?.type !== "tool_use")
             continue;
         const name = str(b.name);
         const bid = str(b.id) || `${id}:${ev.tools.size}`;

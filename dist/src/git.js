@@ -1,5 +1,8 @@
+// Thin wrappers over the git CLI. Everything shells out with execFileSync and an
+// argument array (never a shell string), so refs and paths are not interpreted.
 import { execFileSync } from "node:child_process";
 import { realpathSync } from "node:fs";
+/** Run git and return trimmed stdout. Throws with git's stderr in the message on failure. */
 export function git(args, cwd, input) {
     return execFileSync("git", args, {
         cwd,
@@ -9,6 +12,7 @@ export function git(args, cwd, input) {
         maxBuffer: 64 * 1024 * 1024,
     }).trimEnd();
 }
+/** Run git, returning null on any failure. Only for lookups where "not there" is a normal answer. */
 export function tryGit(args, cwd) {
     try {
         return git(args, cwd);
@@ -17,9 +21,11 @@ export function tryGit(args, cwd) {
         return null;
     }
 }
+/** Top-level directory of the worktree containing `cwd`. */
 export function repoRoot(cwd) {
     return git(["rev-parse", "--show-toplevel"], cwd);
 }
+/** Short name of the checked-out branch, or "HEAD" when detached. */
 export function currentBranch(cwd) {
     return git(["rev-parse", "--abbrev-ref", "HEAD"], cwd);
 }
@@ -63,22 +69,29 @@ export function detectBase(cwd) {
     }
     return null;
 }
-/** Commits in `range` (e.g. "main..feature"), oldest first. */
+/**
+ * Commits in `range` (e.g. "main..feature"), oldest first. Throws if the range
+ * is invalid, because an empty list here would silently shrink the window.
+ *
+ * Both dates are kept because a rebase rewrites every committer date to "now":
+ * using committer time alone would start the window at the rebase and drop
+ * the work that produced the commits.
+ */
 export function commitsIn(range, cwd) {
-    const out = tryGit(["log", "--reverse", "--format=%H %cI", range], cwd);
-    if (!out)
-        return [];
+    const out = git(["log", "--reverse", "--format=%H %cI %aI", range], cwd);
     return out
         .split("\n")
         .filter(Boolean)
         .map((l) => {
-        const [sha, iso] = l.split(" ");
-        return { sha, time: new Date(iso) };
+        const [sha, committed, authored] = l.split(" ");
+        return { sha, time: new Date(committed), authorTime: new Date(authored) };
     });
 }
+/** Committer time of `ref`. */
 export function commitTime(ref, cwd) {
     return new Date(git(["show", "-s", "--format=%cI", ref], cwd));
 }
+/** Full SHA of `ref`. Throws if it does not resolve. */
 export function revParse(ref, cwd) {
     return git(["rev-parse", ref], cwd);
 }

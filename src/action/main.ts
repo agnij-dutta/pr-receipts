@@ -9,6 +9,7 @@ import { findReceipt } from "../notes.js";
 import { renderMarkdown, STICKY_MARKER } from "../render.js";
 import type { Receipt } from "../types.js";
 
+/** Everything the action reads from its environment, so tests can inject it. */
 export interface ActionEnv {
   token?: string;
   eventPath?: string;
@@ -22,18 +23,22 @@ export interface ActionEnv {
   output?: string;
 }
 
+/** Injected fetch, so tests can count and inspect every API call. */
 export type Fetch = typeof fetch;
 
+/** What the action did (or, in dry-run, would have done). */
 export interface Plan {
-  action: "create" | "update" | "skip";
+  action: "create" | "update" | "unchanged" | "skip";
   commentId?: number;
   body?: string;
   reason?: string;
   receiptCommit?: string;
 }
 
+/** Read inputs the way a composite action passes them (INPUT_* env vars) plus the standard GITHUB_* vars. */
 export function envFromProcess(e = process.env): ActionEnv {
-  const input = (name: string) => e[`INPUT_${name.toUpperCase()}`] ?? e[`INPUT_${name.toUpperCase().replace(/-/g, "_")}`];
+  const input = (name: string) =>
+    e[`INPUT_${name.toUpperCase()}`] ?? e[`INPUT_${name.toUpperCase().replace(/-/g, "_")}`];
   return {
     token: input("github-token") || e.GITHUB_TOKEN,
     eventPath: e.GITHUB_EVENT_PATH,
@@ -48,42 +53,67 @@ export function envFromProcess(e = process.env): ActionEnv {
   };
 }
 
-interface PrInfo {
+/** The fields of a pull_request event payload the action uses. */
+export interface PrInfo {
   number: number;
   headSha: string;
   baseSha: string | null;
+  /** Head repo differs from base repo: the token is read-only and notes never travel. */
+  fromFork: boolean;
 }
 
-export function prFromEvent(event: any): PrInfo | null {
-  const pr = event?.pull_request;
+/** Extract the PR from an event payload, or null for non-PR events. */
+export function prFromEvent(event: unknown): PrInfo | null {
+  const pr = (event as { pull_request?: Record<string, any> } | null)?.pull_request;
   if (!pr || typeof pr.number !== "number") return null;
-  return { number: pr.number, headSha: pr.head?.sha, baseSha: pr.base?.sha ?? null };
+  if (typeof pr.head?.sha !== "string") throw new Error("pull_request event has no head.sha");
+  const headRepo = pr.head?.repo?.full_name;
+  const baseRepo = pr.base?.repo?.full_name;
+  return {
+    number: pr.number,
+    headSha: pr.head.sha,
+    baseSha: typeof pr.base?.sha === "string" ? pr.base.sha : null,
+    fromFork: typeof headRepo === "string" && typeof baseRepo === "string" && headRepo !== baseRepo,
+  };
 }
 
+/** Comment body for a receipt (with the sticky marker), or null when there is none. */
 export function bodyFor(receipt: Receipt | null): string | null {
   if (!receipt) return null;
   return renderMarkdown(receipt, { sticky: true });
 }
 
-/** Find our sticky comment (by hidden marker) across all pages. */
+/**
+ * Find our sticky comment across all pages (up to 2,000 comments). A comment is
+ * ours only if its body STARTS with the marker: a human quoting or mentioning
+ * the marker elsewhere in a comment must never be overwritten.
+ */
 export async function findSticky(
   f: Fetch,
   api: string,
   repo: string,
   pr: number,
   token: string,
-): Promise<number | null> {
+): Promise<{ id: number; body: string } | null> {
   for (let page = 1; page <= 20; page++) {
     const res = await f(`${api}/repos/${repo}/issues/${pr}/comments?per_page=100&page=${page}`, {
       headers: ghHeaders(token),
     });
-    if (!res.ok) throw new Error(`list comments failed: ${res.status}`);
+    if (!res.ok) throw apiError("list comments", res);
     const items = (await res.json()) as { id: number; body?: string }[];
-    const hit = items.find((c) => c.body?.includes(STICKY_MARKER));
-    if (hit) return hit.id;
+    const hit = items.find((c) => c.body?.startsWith(STICKY_MARKER));
+    if (hit) return { id: hit.id, body: hit.body ?? "" };
     if (items.length < 100) return null;
   }
   return null;
+}
+
+function apiError(what: string, res: Response): Error {
+  const hint =
+    res.status === 403 || res.status === 404
+      ? " The token needs `pull-requests: write` (see README). Fork PRs get a read-only token."
+      : "";
+  return new Error(`${what} failed: HTTP ${res.status}.${hint}`);
 }
 
 function ghHeaders(token: string): Record<string, string> {
@@ -95,6 +125,11 @@ function ghHeaders(token: string): Record<string, string> {
   };
 }
 
+/**
+ * The whole action: find the newest receipt on the PR's commits, render it,
+ * and create or update the one sticky comment. In dry-run it renders into the
+ * log and step summary and never calls `f`.
+ */
 export async function run(env: ActionEnv, f: Fetch = fetch, log = console.log): Promise<Plan> {
   if (!env.eventPath) throw new Error("GITHUB_EVENT_PATH is not set");
   const event = JSON.parse(readFileSync(env.eventPath, "utf8"));
@@ -102,6 +137,11 @@ export async function run(env: ActionEnv, f: Fetch = fetch, log = console.log): 
   if (!pr) {
     log("pr-receipts: not a pull_request event, nothing to do.");
     return { action: "skip", reason: "not a pull_request event" };
+  }
+  if (pr.fromFork) {
+    // Notes are pushed to the fork, not to this repo, and the token is read-only.
+    log(`pr-receipts: PR #${pr.number} comes from a fork; receipts are not supported there. Skipping.`);
+    return { action: "skip", reason: "fork" };
   }
 
   const found = findReceipt(env.workspace, pr.headSha, pr.baseSha, env.notesRef);
@@ -123,6 +163,7 @@ export async function run(env: ActionEnv, f: Fetch = fetch, log = console.log): 
   }
   if (env.output && found) {
     try {
+      // sanitizeReceipt already made the headline single-line, so it cannot inject extra outputs.
       appendFileSync(env.output, `cost-usd=${found.receipt.totals.costUSD}\nheadline=${found.receipt.headline}\n`);
     } catch {
       /* best-effort */
@@ -138,22 +179,26 @@ export async function run(env: ActionEnv, f: Fetch = fetch, log = console.log): 
 
   const api = env.apiUrl ?? "https://api.github.com";
   const existing = await findSticky(f, api, env.repository, pr.number, env.token);
+  if (existing && existing.body.trimEnd() === body.trimEnd()) {
+    log(`pr-receipts: comment ${existing.id} is already up to date.`);
+    return { action: "unchanged", commentId: existing.id, body, receiptCommit: found?.commit };
+  }
   if (existing) {
-    const res = await f(`${api}/repos/${env.repository}/issues/comments/${existing}`, {
+    const res = await f(`${api}/repos/${env.repository}/issues/comments/${existing.id}`, {
       method: "PATCH",
       headers: ghHeaders(env.token),
       body: JSON.stringify({ body }),
     });
-    if (!res.ok) throw new Error(`update comment failed: ${res.status}`);
-    log(`pr-receipts: updated comment ${existing}`);
-    return { action: "update", commentId: existing, body, receiptCommit: found?.commit };
+    if (!res.ok) throw apiError("update comment", res);
+    log(`pr-receipts: updated comment ${existing.id}`);
+    return { action: "update", commentId: existing.id, body, receiptCommit: found?.commit };
   }
   const res = await f(`${api}/repos/${env.repository}/issues/${pr.number}/comments`, {
     method: "POST",
     headers: ghHeaders(env.token),
     body: JSON.stringify({ body }),
   });
-  if (!res.ok) throw new Error(`create comment failed: ${res.status}`);
+  if (!res.ok) throw apiError("create comment", res);
   const created = (await res.json()) as { id: number };
   log(`pr-receipts: created comment ${created.id}`);
   return { action: "create", commentId: created.id, body, receiptCommit: found?.commit };
