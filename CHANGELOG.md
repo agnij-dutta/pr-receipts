@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [0.1.0] - 2026-10-04
 
+Published to npm on 2026-10-05 as [`pr-receipts`](https://www.npmjs.com/package/pr-receipts). The Action is available as `agnij-dutta/pr-receipts@v0`.
+
 ### Added
 
 - `collect`: reads usage metadata from local Claude Code transcripts (including subagent files), deduplicates streamed records by `message.id`, and attributes each API request to a branch by dedicated worktree, transcript `gitBranch`, working directory and the commit time window. `--loose` adds sessions that edited the branch's files from outside the repo.

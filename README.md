@@ -1,5 +1,7 @@
 # pr-receipts
 
+[![npm](https://img.shields.io/npm/v/pr-receipts)](https://www.npmjs.com/package/pr-receipts)
+
 **What did this pull request cost?** `pr-receipts` reads the usage metadata Claude Code already writes on your machine, works out which API requests belong to a branch, prices them at list price, stores the result on the branch's commits as a git note, and a GitHub Action posts it on the PR as one sticky comment. It is for people who let coding agents write PRs and want the bill next to the diff.
 
 It never reads out prompts, code, or tool output: only token counts, ids, timestamps, model names, and repo-relative file paths.
@@ -36,6 +38,15 @@ Agent-written PRs arrive with a diff and a description, but not with what they c
 
 Requires Node 20+ and git.
 
+Install the CLI from npm, or run it once with npx:
+
+```bash
+npm install -g pr-receipts    # puts `pr-receipts` on PATH
+npx pr-receipts --help        # or run it without installing
+```
+
+To try it on synthetic fixtures first, build from source:
+
 ```bash
 git clone https://github.com/agnij-dutta/pr-receipts.git
 cd pr-receipts
@@ -61,8 +72,6 @@ This PR cost $0.31 and 20 minutes of agent time.  (5 requests, confidence high) 
 On a real repo, after an agent has worked on a branch:
 
 ```bash
-npm link                      # puts `pr-receipts` on PATH (from the pr-receipts checkout)
-
 cd ~/code/some-repo
 git checkout feature/thing    # a branch an agent worked on
 pr-receipts collect           # -> receipt.json
@@ -283,7 +292,7 @@ What this adds: per-PR attribution, storage on the commits so CI can use it with
 - Attribute Bash-driven file edits for `--loose` by diffing the working tree around tool calls.
 - Capture side calls that never reach the transcript (for example via Claude Code's OpenTelemetry export) so the cost stops being a lower bound.
 - Fork PR support. A fork cannot push notes to the base repo, so this needs another channel, such as a receipt the contributor uploads as a workflow artifact.
-- Publish to npm and the GitHub Marketplace, with a `v0` tag for the Action.
+- List the Action on the GitHub Marketplace.
 
 ## Contributing
 
